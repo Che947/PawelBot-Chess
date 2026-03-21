@@ -16,14 +16,11 @@ bot_id = client.account.get()["id"]
 print("Bot ID:", bot_id)
 
 # =========================
-# START ENGINE
+# LIMIT GIER
 # =========================
-engine = subprocess.Popen(
-    ["./engine"], 
-    stdin=subprocess.PIPE,
-    stdout=subprocess.PIPE,
-    text=True
-)
+MAX_GAMES = 2
+active_games = set()
+lock = threading.Lock()
 
 def find_mate_in_one(board):
     for move in board.legal_moves:
@@ -34,10 +31,9 @@ def find_mate_in_one(board):
         board.pop()
     return None
 
-def get_engine_move(board, game_id):
+def get_engine_move(board, game_id, engine):
     mate_move = find_mate_in_one(board)
     if mate_move:
-        print("DEBUG: Znaleziono mata w 1! Wysyłam natychmiast.")
         return mate_move.uci()
 
     moves_played = len(board.move_stack)
@@ -46,7 +42,6 @@ def get_engine_move(board, game_id):
     try:
         if moves_played < 20:
             depth = 6
-            print(f"DEBUG: Szybki start (półruch {moves_played}) -> Depth: 6")
         else:
             game_status = client.games.get_ongoing()
             current_game = next((g for g in game_status if g['gameId'] == game_id), None)
@@ -71,28 +66,13 @@ def get_engine_move(board, game_id):
                         depth += 3
                     elif piece_count <= 12:
                         depth += 1
-
-                print(f"DEBUG: Czas: {my_time}s -> Depth: {depth}")
             else:
                 depth = 7
-    except Exception as e:
-        print(f"DEBUG: Błąd czasu ({e}), depth 7")
+    except:
         depth = 7
 
     fen = board.fen()
-    history_hashes = []
-    temp_board = board.copy()
-
-    for _ in range(min(len(board.move_stack), 6)):
-        history_hashes.append(str(chess.polyglot.zobrist_hash(temp_board)))
-        try:
-            temp_board.pop()
-        except:
-            break
-    
-    hashes_str = " ".join(history_hashes)
-    
-    engine.stdin.write(f"position fen {fen} hashes {hashes_str}\n")
+    engine.stdin.write(f"position fen {fen}\n")
     engine.stdin.write(f"go depth {depth}\n")
     engine.stdin.flush()
 
@@ -104,13 +84,24 @@ def get_engine_move(board, game_id):
 def send_chat_message(game_id, message):
     try:
         client.bots.post_message(game_id, message) 
-    except Exception as e:
-        print(f"DEBUG: chat error: {e}")
+    except:
+        pass
 
 # =========================
 # OBSŁUGA PARTII
 # =========================
 def handle_game(game_id):
+    with lock:
+        active_games.add(game_id)
+
+    # 🔥 NOWY SILNIK NA PARTIĘ
+    engine = subprocess.Popen(
+        ["./engine"],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        text=True
+    )
+
     board = chess.Board()
     initial_fen = chess.STARTING_FEN
     game_ended_sent = False
@@ -140,7 +131,7 @@ def handle_game(game_id):
                         board.push_uci(m)
 
                 if my_color is not None and board.turn == my_color and not board.is_game_over():
-                    move_uci = get_engine_move(board, game_id)
+                    move_uci = get_engine_move(board, game_id, engine)
                     try:
                         client.bots.make_move(game_id, move_uci)
                     except Exception as e:
@@ -160,34 +151,46 @@ def handle_game(game_id):
                         board.push_uci(m)
 
                 if my_color is not None and board.turn == my_color and not board.is_game_over():
-                    move_uci = get_engine_move(board, game_id)
+                    move_uci = get_engine_move(board, game_id, engine)
                     try:
                         client.bots.make_move(game_id, move_uci)
                     except Exception as e:
                         if "Not your turn" not in str(e):
                             print(f"Błąd ruchu: {e}")
 
-            # timeout na brak eventów
+            # timeout
             if time.time() - last_event_time > 30:
-                print("Brak eventów – restart gry")
+                print("Timeout gry - restart")
                 break
                             
     except Exception as e:
         print(f"Partia przerwana: {e}")
 
+    finally:
+        engine.kill()
+        with lock:
+            active_games.discard(game_id)
+
 # =========================
 # STREAM WYZWAN
 # =========================
 def main():
-    print("PawelBot_V6 gotowy do akcji...")
+    print("Bot działa...")
+
     while True:
         try:
             for event in client.bots.stream_incoming_events():
+
                 if event["type"] == "challenge":
-                    challenge_id = event["challenge"]["id"]
+                    with lock:
+                        if len(active_games) >= MAX_GAMES:
+                            print("Limit gier osiągnięty - odrzucam")
+                            client.bots.decline_challenge(event["challenge"]["id"])
+                            continue
+
                     try:
-                        client.bots.accept_challenge(challenge_id)
-                        print(f"Zaakceptowano: {challenge_id}")
+                        client.bots.accept_challenge(event["challenge"]["id"])
+                        print("Przyjęto wyzwanie")
                     except:
                         print("Błąd accept")
 
