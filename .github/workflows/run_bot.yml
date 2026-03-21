@@ -23,7 +23,7 @@ jobs:
 
     - name: Compile Engine (C++)
       run: |
-        g++ -O3 engine.cpp -o engine.exe
+        g++ -O3 engine.cpp -o engine
 
     - name: Run Bot
       env:
