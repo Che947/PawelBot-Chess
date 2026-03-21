@@ -19,7 +19,7 @@ print("Bot ID:", bot_id)
 # START ENGINE
 # =========================
 engine = subprocess.Popen(
-    ["engine.exe"],
+    ["./engine"], 
     stdin=subprocess.PIPE,
     stdout=subprocess.PIPE,
     text=True
