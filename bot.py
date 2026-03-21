@@ -72,11 +72,17 @@ def get_engine_move(board, game_id):
                     depth = 4
                 
                 # Bonus za końcówkę
+                # --- DYNAMICZNY BONUS ZA KOŃCÓWKĘ ---
                 occupied_mask = int(board.occupied)
                 piece_count = bin(occupied_mask).count('1') 
-                if piece_count <= 12 and my_time > 15:
-                    depth += 2
-                    print(f"DEBUG: Końcówka ({piece_count} bierek) -> Bonus +1 do Depth: {depth}")
+                
+                if my_time > 15:  # Dodajemy bonusy tylko jeśli mamy zapas czasu
+                    if piece_count <= 5:
+                        depth += 3
+                        print(f"DEBUG: Głęboka końcówka ({piece_count} bierek) -> Super Bonus +3 do Depth: {depth}")
+                    elif piece_count <= 12:
+                        depth += 1
+                        print(f"DEBUG: Końcówka ({piece_count} bierek) -> Bonus +1 do Depth: {depth}")
 
                 print(f"DEBUG: Czas: {my_time}s -> Ustawiam Depth: {depth}")
             else:
