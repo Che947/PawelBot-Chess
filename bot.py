@@ -1,3 +1,4 @@
+import os
 import berserk
 import chess
 import chess.polyglot
@@ -8,7 +9,7 @@ import subprocess
 # =========================
 # LICHESS API
 # =========================
-LICHESS_API_TOKEN = "TWÓJ_TOKEN_TUTAJ"
+LICHESS_API_TOKEN = os.getenv("LICHESS_TOKEN")
 
 client = berserk.Client(berserk.TokenSession(LICHESS_API_TOKEN))
 bot_id = client.account.get()["id"]
