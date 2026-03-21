@@ -1,0 +1,32 @@
+name: PawelBot Lichess Runner
+
+on:
+  workflow_dispatch: # Pozwala uruchomić bota ręcznie przyciskiem
+
+jobs:
+  run-bot:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install berserk python-chess
+
+    - name: Compile Engine (C++)
+      run: |
+        g++ -O3 engine.cpp -o engine.exe
+
+    - name: Run Bot
+      env:
+        LICHESS_TOKEN: ${{ secrets.LICHESS_TOKEN }}
+      run: |
+        python bot.py
