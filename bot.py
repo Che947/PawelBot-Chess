@@ -53,14 +53,17 @@ def get_engine_move(board, game_id, my_time):
             depth = 6
             print(f"DEBUG: Szybki start (półruch {moves_played}) -> Depth: 6")
         else:
-            # USUNIĘTO: client.games.get_ongoing() - to spowalniało bota
-            if my_time is not None:
-                # Twoje progi czasowe
-                if my_time > 300:
+            # Sprawdzamy, czy time_left w ogóle istnieje
+            if time_left is not None:
+                # Zamieniamy obiekt timedelta na sekundy (liczbę)
+                current_seconds = time_left.total_seconds()
+                
+                # Teraz używamy current_seconds we wszystkich porównaniach
+                if current_seconds > 300:
                     depth = 8
-                elif my_time > 120:
+                elif current_seconds > 120:
                     depth = 7
-                elif my_time > 15:
+                elif current_seconds > 15:
                     depth = 6
                 else:
                     depth = 4
@@ -69,15 +72,15 @@ def get_engine_move(board, game_id, my_time):
                 occupied_mask = int(board.occupied)
                 piece_count = bin(occupied_mask).count('1') 
                 
-                if my_time > 15:  
+                if current_seconds > 15:  
                     if piece_count <= 5:
                         depth += 3
                         print(f"DEBUG: Głęboka końcówka ({piece_count} bierek) -> Super Bonus +3")
                     elif piece_count <= 12:
-                        depth += 1
+                        depth = depth + 1 # Bezpieczniejszy zapis
                         print(f"DEBUG: Końcówka ({piece_count} bierek) -> Bonus +1")
 
-                print(f"DEBUG: Czas: {my_time}s -> Ustawiam Depth: {depth}")
+                print(f"DEBUG: Czas: {current_seconds}s -> Ustawiam Depth: {depth}")
             else:
                 depth = 7
     except Exception as e:
