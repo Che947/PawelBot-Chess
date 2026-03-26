@@ -5,6 +5,7 @@ import chess.polyglot
 import time
 import threading
 import subprocess
+from datetime import timedelta
 
 # =========================
 # LICHESS API
@@ -25,6 +26,16 @@ engine = subprocess.Popen(
     text=True
 )
 
+def safe_get_seconds(time_val):
+    """Bezpiecznie zamienia czas z Lichess na sekundy (float)."""
+    if isinstance(time_val, timedelta):
+        return time_val.total_seconds()
+    try:
+        # Jeśli to milisekundy (liczba), zamień na sekundy
+        return float(time_val) / 1000.0
+    except:
+        return 60.0 # Wartość domyślna w razie błędu
+
 def find_mate_in_one(board):
     """Sprawdza, czy jest mat w 1 ruchu przed zapytaniem silnika."""
     for move in board.legal_moves:
@@ -34,6 +45,7 @@ def find_mate_in_one(board):
             return move
         board.pop()
     return None
+
 def get_engine_move(board, game_id, my_time):
     # 1. Natychmiastowy mat w 1 ruchu
     mate_move = find_mate_in_one(board)
@@ -51,7 +63,6 @@ def get_engine_move(board, game_id, my_time):
             depth = 6
             print(f"DEBUG: Szybki start (półruch {moves_played}) -> Depth: 6")
         else:
-            # Używamy my_time (to już są sekundy jako float/int)
             if my_time is not None:
                 # Progi czasowe
                 if my_time > 300:
@@ -140,9 +151,9 @@ def handle_game(game_id):
                         board.push_uci(m)
 
                 if my_color is not None and board.turn == my_color and not board.is_game_over():
-                    # Wyciągamy czas z eventu
-                    my_time_ms = state["wtime"] if my_color == chess.WHITE else state["btime"]
-                    move_uci = get_engine_move(board, game_id, my_time_ms / 1000)
+                    raw_time = state["wtime"] if my_color == chess.WHITE else state["btime"]
+                    my_time_sec = safe_get_seconds(raw_time)
+                    move_uci = get_engine_move(board, game_id, my_time_sec)
                     try:
                         client.bots.make_move(game_id, move_uci)
                     except Exception as e:
@@ -162,9 +173,9 @@ def handle_game(game_id):
                         board.push_uci(m)
 
                 if my_color is not None and board.turn == my_color and not board.is_game_over():
-                    # POPRAWKA: Pobieramy czas bezpośrednio z gameState
-                    my_time_ms = event["wtime"] if my_color == chess.WHITE else event["btime"]
-                    move_uci = get_engine_move(board, game_id, my_time_ms / 1000)
+                    raw_time = event["wtime"] if my_color == chess.WHITE else event["btime"]
+                    my_time_sec = safe_get_seconds(raw_time)
+                    move_uci = get_engine_move(board, game_id, my_time_sec)
                     try:
                         client.bots.make_move(game_id, move_uci)
                     except Exception as e:
@@ -178,7 +189,7 @@ def handle_game(game_id):
 # STREAM WYZWAN (GŁÓWNA PĘTLA)
 # =========================
 def main():
-    print("PawelBot_V6 gotowy do akcji...")
+    print("PawelBot gotowy do akcji...")
     for event in client.bots.stream_incoming_events():
         if event["type"] == "challenge":
             challenge_id = event["challenge"]["id"]
