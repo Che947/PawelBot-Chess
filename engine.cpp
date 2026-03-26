@@ -348,10 +348,9 @@ int alphabeta(int depth, int alpha, int beta) {
     std::cout << "bestmove " << uci::moveToUci(best_m) << std::endl;
 }
 
-// --- MAIN ---
 int main() {
     std::ios::sync_with_stdio(false);
-    init_opening_book(); // Wczytanie debiutów przy starcie
+    init_opening_book();
     std::string line;
     while (std::getline(std::cin, line)) {
         if (line == "uci") {
@@ -360,7 +359,7 @@ int main() {
             std::cout << "readyok" << std::endl;
         } else if (line.find("position fen") == 0) {
             std::stringstream ss(line);
-            std::string t; ss >> t >> t; // "position fen"
+            std::string t; ss >> t >> t; 
             std::string fen; for(int i=0; i<6; i++) { ss >> t; fen += t + " "; }
             board.setFen(fen);
             position_history.clear();
@@ -368,19 +367,15 @@ int main() {
                 uint64_t h; while (ss >> h) position_history.push_back(h);
             }
         } else if (line.find("go") == 0) {
-            transposition_table.clear();
-            std::string current_fen = board.getFen();
-            
-            if (opening_book.count(current_fen)) {
-                std::vector<std::string>& moves = opening_book[current_fen];
-                
-                // Losowanie ruchu z dostępnych opcji
-                static std::mt19937 gen(std::chrono::system_clock::now().time_since_epoch().count());
-                std::uniform_int_distribution<> dis(0, moves.size() - 1);
-                std::string chosen_move = moves[dis(gen)];
+            // Czyścimy TT na starcie go, żeby uniknąć starych śmieci z innych partii
+            transposition_table.clear(); 
 
-                std::cerr << "DEBUG: Ruch z ksiazki (losowy z " << moves.size() << " opcji)" << std::endl;
-                std::cout << "bestmove " << chosen_move << std::endl;
+            std::string current_fen = board.getFen();
+            if (opening_book.count(current_fen)) {
+                std::vector<std::string>& book_moves = opening_book[current_fen];
+                static std::mt19937 gen(std::chrono::system_clock::now().time_since_epoch().count());
+                std::uniform_int_distribution<> dis(0, book_moves.size() - 1);
+                std::cout << "bestmove " << book_moves[dis(gen)] << std::endl;
                 continue; 
             }
 
@@ -395,22 +390,31 @@ int main() {
             movegen::legalmoves(moves, board);
             if (moves.empty()) { std::cout << "bestmove 0000" << std::endl; continue; }
 
+            // Sortowanie dla optymalizacji Alpha-Beta
             std::sort(moves.begin(), moves.end(), [](const Move& a, const Move& b) {
                 return get_move_score(a) > get_move_score(b);
             });
 
             Color mover = board.sideToMove();
             Move best_m = moves[0];
-            int best_v = (mover == Color::WHITE) ? -4000000 : 4000000;
+            int best_v = (mover == Color::WHITE) ? -5000000 : 5000000;
 
             for (auto m : moves) {
                 board.makeMove(m);
                 uint64_t next_h = board.hash();
+                
                 bool repeat = false;
-                for (auto h : position_history) if (h == next_h) { repeat = true; break; }
+                for (auto h : position_history) {
+                    if (h == next_h) { repeat = true; break; }
+                }
 
-                int score = repeat ? 0 : alphabeta(depth - 1, -4000000, 4000000);
-                if (repeat) score = (mover == Color::WHITE) ? -15000 : 15000;
+                int score;
+                if (repeat) {
+                    score = 0; 
+                } else {
+                    // SZEROKIE OKNO dla głównej pętli, aby dostać precyzyjny wynik
+                    score = alphabeta(depth - 1, -4000000, 4000000);
+                }
 
                 board.unmakeMove(m);
 
@@ -423,8 +427,9 @@ int main() {
 
             auto end = std::chrono::high_resolution_clock::now();
             auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
-            std::cerr << "DEBUG: Przeanalizowano " << nodes_visited << " pozycji w " << duration << "ms" << std::endl;
+            std::cerr << "info depth " << depth << " nodes " << nodes_visited << " score cp " << best_v << std::endl;
             std::cout << "bestmove " << uci::moveToUci(best_m) << std::endl;
+
         } else if (line == "quit") {
             break;
         }
