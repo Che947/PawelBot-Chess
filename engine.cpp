@@ -142,6 +142,8 @@ int get_move_score(const Move& m) {
 int evaluate() {
     int score = 0;
     int major_pieces = 0;
+    
+    // Liczenie fazy gry
     for (int i = 0; i < 64; i++) {
         auto pt = board.at(Square(i)).type();
         if (pt != PieceType::NONE && pt != PieceType::PAWN && pt != PieceType::KING) major_pieces++;
@@ -152,6 +154,7 @@ int evaluate() {
         Square sq = Square(i);
         auto piece = board.at(sq);
         if (piece.type() == PieceType::NONE) continue;
+        
         int val = 0;
         const int* pst = nullptr;
         auto pt = piece.type();
@@ -166,7 +169,19 @@ int evaluate() {
         else if (pt == PieceType::KNIGHT) { val = 320; pst = knight_pst; }
         else if (pt == PieceType::BISHOP) { val = 330; }
         else if (pt == PieceType::ROOK)   { val = 500; }
-        else if (pt == PieceType::QUEEN)  { val = 900; }
+        else if (pt == PieceType::QUEEN)  { 
+            val = 900; 
+            
+            // --- POPRAWKA: KARA ZA WCZESNE WYJŚCIE HETMANEM ---
+            // Jeśli faza gry jest niska (dużo figur = debiut)
+            if (phase < 0.2f) { 
+                if (c == Color::WHITE && i != 3) { // 3 to indeks pola D1
+                    val -= 50; 
+                } else if (c == Color::BLACK && i != 59) { // 59 to indeks pola D8
+                    val -= 50;
+                }
+            }
+        }
         else if (pt == PieceType::KING) {
             val = 20000;
             int pst_mid = (c == Color::WHITE) ? king_pst[i] : king_pst[i ^ 56];
@@ -174,6 +189,7 @@ int evaluate() {
             score += (c == Color::WHITE) ? (val + (int)(pst_mid*(1-phase)+pst_end*phase)) : -(val + (int)(pst_mid*(1-phase)+pst_end*phase));
             continue;
         }
+
         int pst_val = 0;
         if (pst) pst_val = (c == Color::WHITE) ? pst[i] : pst[i ^ 56];
         score += (c == Color::WHITE) ? (val + pst_val) : -(val + pst_val);
