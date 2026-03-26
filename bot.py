@@ -80,6 +80,9 @@ def get_engine_move(board, game_id, my_time):
                 
                 if my_time > 15:  
                     if piece_count <= 5:
+                        depth += 6
+                        print(f"DEBUG: Bardzo głęboka końcówka ({piece_count} bierek) -> Super Bonus +6")
+                    elif piece_count <= 8:
                         depth += 3
                         print(f"DEBUG: Głęboka końcówka ({piece_count} bierek) -> Super Bonus +3")
                     elif piece_count <= 12:
