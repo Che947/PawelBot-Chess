@@ -6,7 +6,8 @@
 #include <algorithm>
 #include <random>
 #include <chrono>
-#include <map>       // Dodane dla księgi otwarć
+#include <map>
+#include <unordered_map>
 #include "chess.hpp"
 
 using namespace chess;
@@ -15,7 +16,7 @@ Board board;
 std::vector<uint64_t> position_history;
 long long nodes_visited = 0;
 
-// --- POPRAWIONA STRUKTURA TT ---
+// --- STRUKTURA TT ---
 enum TTFlag { EXACT, LOWERBOUND, UPPERBOUND };
 
 struct TTEntry {
@@ -84,7 +85,7 @@ void init_opening_book() {
     add_to_book("rnbqkb1r/pppp1ppp/4pn2/8/2PP4/5N2/PP2PPPP/RNBQKB1R b KQkq - 1 3", "b7b6");
 }
 
-// --- TABLICE PST (Nienaruszone) ---
+// --- TABLICE PST ---
 const int pawn_pst[64] = {
     0,  0,  0,  0,  0,  0,  0,  0,
     5, 10, 10,-20,-20, 10, 10,  5,
@@ -105,17 +106,6 @@ const int knight_pst[64] = {
     -30,  0, 10, 15, 15, 10,  0,-30,
     -40,-20,  0,  0,  0,  0,-20,-40,
     -50,-40,-30,-30,-30,-30,-40,-50
-};
-
-const int bishop_pst[64] = {
-    -20,-10,-10,-10,-10,-10,-10,-20,
-    -10,  5,  0,  0,  0,  0,  5,-10,
-    -10, 10, 10, 10, 10, 10, 10,-10,
-    -10,  0, 10, 10, 10, 10,  0,-10,
-    -10,  5,  5, 10, 10,  5,  5,-10,
-    -10,  0,  5, 10, 10,  5,  0,-10,
-    -10,  0,  0,  0,  0,  0,  0,-10,
-    -20,-10,-10,-10,-10,-10,-10,-20
 };
 
 const int king_pst[64] = {
@@ -149,7 +139,6 @@ int get_move_score(const Move& m) {
     return 0;
 }
 
-// --- EWALUACJA ---
 int evaluate() {
     int score = 0;
     int major_pieces = 0;
@@ -157,38 +146,29 @@ int evaluate() {
         auto pt = board.at(Square(i)).type();
         if (pt != PieceType::NONE && pt != PieceType::PAWN && pt != PieceType::KING) major_pieces++;
     }
-
     float phase = 1.0f - (std::min(major_pieces, 14) / 14.0f);
 
     for (int i = 0; i < 64; i++) {
         Square sq = Square(i);
         auto piece = board.at(sq);
         if (piece.type() == PieceType::NONE) continue;
-
         int val = 0;
         const int* pst = nullptr;
         auto pt = piece.type();
         Color c = piece.color();
 
-        if (pt == PieceType::PAWN) { 
-            val = 100; pst = pawn_pst; 
-            int r = (int)sq.rank();
-            int rank_bonus = (c == Color::WHITE) ? (r * r) : ((7 - r) * (7 - r));
-            val += (int)(rank_bonus * (0.2f + (0.8f * phase)));
-        }
+        if (pt == PieceType::PAWN) { val = 100; pst = pawn_pst; }
         else if (pt == PieceType::KNIGHT) { val = 320; pst = knight_pst; }
-        else if (pt == PieceType::BISHOP) { val = 330; pst = bishop_pst; }
+        else if (pt == PieceType::BISHOP) { val = 330; }
         else if (pt == PieceType::ROOK)   { val = 500; }
         else if (pt == PieceType::QUEEN)  { val = 900; }
-        else if (pt == PieceType::KING)   { 
-            val = 20000; 
+        else if (pt == PieceType::KING) {
+            val = 20000;
             int pst_mid = (c == Color::WHITE) ? king_pst[i] : king_pst[i ^ 56];
             int pst_end = (c == Color::WHITE) ? king_endgame_pst[i] : king_endgame_pst[i ^ 56];
-            int interpolated_pst = (int)(pst_mid * (1.0f - phase) + pst_end * phase);
-            score += (c == Color::WHITE) ? (val + interpolated_pst) : -(val + interpolated_pst);
+            score += (c == Color::WHITE) ? (val + (int)(pst_mid*(1-phase)+pst_end*phase)) : -(val + (int)(pst_mid*(1-phase)+pst_end*phase));
             continue;
         }
-
         int pst_val = 0;
         if (pst) pst_val = (c == Color::WHITE) ? pst[i] : pst[i ^ 56];
         score += (c == Color::WHITE) ? (val + pst_val) : -(val + pst_val);
@@ -198,10 +178,7 @@ int evaluate() {
 
 int alphabeta(int depth, int alpha, int beta) {
     nodes_visited++;
-    
     uint64_t pos_hash = board.hash();
-    
-    // 1. Sprawdzenie TT z uwzględnieniem flag
     if (transposition_table.count(pos_hash)) {
         auto& entry = transposition_table[pos_hash];
         if (entry.depth >= depth) {
@@ -213,14 +190,10 @@ int alphabeta(int depth, int alpha, int beta) {
 
     Movelist moves;
     movegen::legalmoves(moves, board);
-    
     if (moves.empty()) {
-        if (board.inCheck()) {
-            return (board.sideToMove() == Color::WHITE) ? (-1000000 - depth) : (1000000 + depth);
-        }
-        return 0; // Pat
+        if (board.inCheck()) return (board.sideToMove() == Color::WHITE) ? (-1000000 - depth) : (1000000 + depth);
+        return 0;
     }
-
     if (depth <= 0) return evaluate();
 
     std::sort(moves.begin(), moves.end(), [](const Move& a, const Move& b) {
@@ -228,19 +201,16 @@ int alphabeta(int depth, int alpha, int beta) {
     });
 
     int best_score;
-    int original_alpha = alpha;
-    int original_beta = beta;
-
+    int old_alpha = alpha;
     if (board.sideToMove() == Color::WHITE) {
         best_score = -3000000;
         for (auto m : moves) {
             board.makeMove(m);
             int score = alphabeta(depth - 1, alpha, beta);
             board.unmakeMove(m);
-            
             if (score > best_score) best_score = score;
             alpha = std::max(alpha, best_score);
-            if (beta <= alpha) break; 
+            if (beta <= alpha) break;
         }
     } else {
         best_score = 3000000;
@@ -248,104 +218,19 @@ int alphabeta(int depth, int alpha, int beta) {
             board.makeMove(m);
             int score = alphabeta(depth - 1, alpha, beta);
             board.unmakeMove(m);
-            
             if (score < best_score) best_score = score;
             beta = std::min(beta, best_score);
             if (beta <= alpha) break;
         }
     }
 
-    // 2. Zapisywanie do TT z odpowiednią flagą
     TTEntry entry;
-    entry.depth = depth;
-    entry.score = best_score;
-
-    if (board.sideToMove() == Color::WHITE) {
-        if (best_score <= original_alpha) entry.flag = UPPERBOUND;
-        else if (best_score >= beta) entry.flag = LOWERBOUND;
-        else entry.flag = EXACT;
-    } else {
-        if (best_score >= original_beta) entry.flag = LOWERBOUND;
-        else if (best_score <= alpha) entry.flag = UPPERBOUND;
-        else entry.flag = EXACT;
-    }
-
+    entry.depth = depth; entry.score = best_score;
+    if (best_score <= old_alpha) entry.flag = UPPERBOUND;
+    else if (best_score >= beta) entry.flag = LOWERBOUND;
+    else entry.flag = EXACT;
     transposition_table[pos_hash] = entry;
     return best_score;
-}
-
-// --- POPRAWIONA PĘTLA W MAIN (sekcja "go") ---
-// Wklej to wewnątrz else if (line.find("go") == 0)
-{
-    // Nie czyść TT całkowicie przy każdym ruchu (opcjonalnie, ale lepiej zostawić dla szybkości)
-    // transposition_table.clear(); 
-
-    std::string current_fen = board.getFen();
-    if (opening_book.count(current_fen)) {
-        std::vector<std::string>& book_moves = opening_book[current_fen];
-        static std::mt19937 gen(std::chrono::system_clock::now().time_since_epoch().count());
-        std::uniform_int_distribution<> dis(0, book_moves.size() - 1);
-        std::cout << "bestmove " << book_moves[dis(gen)] << std::endl;
-        continue; 
-    }
-
-    nodes_visited = 0;
-    auto start = std::chrono::high_resolution_clock::now();
-    
-    int depth = 6;
-    size_t d_pos = line.find("depth");
-    if (d_pos != std::string::npos) depth = std::stoi(line.substr(d_pos + 6));
-
-    Movelist moves;
-    movegen::legalmoves(moves, board);
-    if (moves.empty()) { std::cout << "bestmove 0000" << std::endl; continue; }
-
-    std::sort(moves.begin(), moves.end(), [](const Move& a, const Move& b) {
-        return get_move_score(a) > get_move_score(b);
-    });
-
-    Color mover = board.sideToMove();
-    Move best_m = moves[0];
-    
-    // Ustawiamy wartości startowe poza zakresem alphabeta
-    int best_v = (mover == Color::WHITE) ? -5000000 : 5000000;
-
-    for (auto m : moves) {
-        board.makeMove(m);
-        uint64_t next_h = board.hash();
-        
-        bool repeat = false;
-        for (auto h : position_history) {
-            if (h == next_h) { repeat = true; break; }
-        }
-
-        int score;
-        if (repeat) {
-            score = 0; // Remis przez powtórzenie
-        } else {
-            // Wywołujemy z pełnym oknem, aby otrzymać dokładny wynik dla pierwszego poziomu
-            score = alphabeta(depth - 1, -4000000, 4000000);
-        }
-
-        board.unmakeMove(m);
-
-        if (mover == Color::WHITE) {
-            if (score > best_v) { 
-                best_v = score; 
-                best_m = m; 
-            }
-        } else {
-            if (score < best_v) { 
-                best_v = score; 
-                best_m = m; 
-            }
-        }
-    }
-
-    auto end = std::chrono::high_resolution_clock::now();
-    auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
-    std::cerr << "info depth " << depth << " nodes " << nodes_visited << " time " << duration << " score cp " << best_v << std::endl;
-    std::cout << "bestmove " << uci::moveToUci(best_m) << std::endl;
 }
 
 int main() {
@@ -359,29 +244,21 @@ int main() {
             std::cout << "readyok" << std::endl;
         } else if (line.find("position fen") == 0) {
             std::stringstream ss(line);
-            std::string t; ss >> t >> t; 
+            std::string t; ss >> t >> t;
             std::string fen; for(int i=0; i<6; i++) { ss >> t; fen += t + " "; }
             board.setFen(fen);
             position_history.clear();
-            while (ss >> t) if (t == "hashes") {
-                uint64_t h; while (ss >> h) position_history.push_back(h);
-            }
         } else if (line.find("go") == 0) {
-            // Czyścimy TT na starcie go, żeby uniknąć starych śmieci z innych partii
-            transposition_table.clear(); 
-
+            transposition_table.clear();
             std::string current_fen = board.getFen();
             if (opening_book.count(current_fen)) {
-                std::vector<std::string>& book_moves = opening_book[current_fen];
+                std::vector<std::string>& bmoves = opening_book[current_fen];
                 static std::mt19937 gen(std::chrono::system_clock::now().time_since_epoch().count());
-                std::uniform_int_distribution<> dis(0, book_moves.size() - 1);
-                std::cout << "bestmove " << book_moves[dis(gen)] << std::endl;
-                continue; 
+                std::cout << "bestmove " << bmoves[std::uniform_int_distribution<>(0, bmoves.size()-1)(gen)] << std::endl;
+                continue;
             }
-
             nodes_visited = 0;
             auto start = std::chrono::high_resolution_clock::now();
-            
             int depth = 6;
             size_t d_pos = line.find("depth");
             if (d_pos != std::string::npos) depth = std::stoi(line.substr(d_pos + 6));
@@ -389,11 +266,7 @@ int main() {
             Movelist moves;
             movegen::legalmoves(moves, board);
             if (moves.empty()) { std::cout << "bestmove 0000" << std::endl; continue; }
-
-            // Sortowanie dla optymalizacji Alpha-Beta
-            std::sort(moves.begin(), moves.end(), [](const Move& a, const Move& b) {
-                return get_move_score(a) > get_move_score(b);
-            });
+            std::sort(moves.begin(), moves.end(), [](const Move& a, const Move& b) { return get_move_score(a) > get_move_score(b); });
 
             Color mover = board.sideToMove();
             Move best_m = moves[0];
@@ -401,38 +274,15 @@ int main() {
 
             for (auto m : moves) {
                 board.makeMove(m);
-                uint64_t next_h = board.hash();
-                
-                bool repeat = false;
-                for (auto h : position_history) {
-                    if (h == next_h) { repeat = true; break; }
-                }
-
-                int score;
-                if (repeat) {
-                    score = 0; 
-                } else {
-                    // SZEROKIE OKNO dla głównej pętli, aby dostać precyzyjny wynik
-                    score = alphabeta(depth - 1, -4000000, 4000000);
-                }
-
+                int score = alphabeta(depth - 1, -4000000, 4000000);
                 board.unmakeMove(m);
-
-                if (mover == Color::WHITE) {
-                    if (score > best_v) { best_v = score; best_m = m; }
-                } else {
-                    if (score < best_v) { best_v = score; best_m = m; }
-                }
+                if (mover == Color::WHITE) { if (score > best_v) { best_v = score; best_m = m; } }
+                else { if (score < best_v) { best_v = score; best_m = m; } }
             }
-
-            auto end = std::chrono::high_resolution_clock::now();
-            auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
-            std::cerr << "info depth " << depth << " nodes " << nodes_visited << " score cp " << best_v << std::endl;
             std::cout << "bestmove " << uci::moveToUci(best_m) << std::endl;
-
-        } else if (line == "quit") {
-            break;
-        }
+        } else if (line == "quit") break;
     }
+    return 0;
+}
     return 0;
 }
