@@ -15,9 +15,13 @@ Board board;
 std::vector<uint64_t> position_history;
 long long nodes_visited = 0;
 
+// --- POPRAWIONA STRUKTURA TT ---
+enum TTFlag { EXACT, LOWERBOUND, UPPERBOUND };
+
 struct TTEntry {
     int depth;
     int score;
+    TTFlag flag;
 };
 std::unordered_map<uint64_t, TTEntry> transposition_table;
 
@@ -192,17 +196,18 @@ int evaluate() {
     return score;
 }
 
-// --- ALPHABETA ---
-// Główna funkcja Alpha-Beta z Transposition Table
 int alphabeta(int depth, int alpha, int beta) {
     nodes_visited++;
     
-    // 1. Sprawdzenie TT (Transposition Table)
     uint64_t pos_hash = board.hash();
+    
+    // 1. Sprawdzenie TT z uwzględnieniem flag
     if (transposition_table.count(pos_hash)) {
         auto& entry = transposition_table[pos_hash];
         if (entry.depth >= depth) {
-            return entry.score;
+            if (entry.flag == EXACT) return entry.score;
+            if (entry.flag == LOWERBOUND && entry.score >= beta) return entry.score;
+            if (entry.flag == UPPERBOUND && entry.score <= alpha) return entry.score;
         }
     }
 
@@ -218,12 +223,14 @@ int alphabeta(int depth, int alpha, int beta) {
 
     if (depth <= 0) return evaluate();
 
-    // Sortowanie ruchów (MVV-LVA) dla lepszych odcięć
     std::sort(moves.begin(), moves.end(), [](const Move& a, const Move& b) {
         return get_move_score(a) > get_move_score(b);
     });
 
     int best_score;
+    int original_alpha = alpha;
+    int original_beta = beta;
+
     if (board.sideToMove() == Color::WHITE) {
         best_score = -3000000;
         for (auto m : moves) {
@@ -231,11 +238,9 @@ int alphabeta(int depth, int alpha, int beta) {
             int score = alphabeta(depth - 1, alpha, beta);
             board.unmakeMove(m);
             
-            if (score > best_score) {
-                best_score = score;
-            }
+            if (score > best_score) best_score = score;
             alpha = std::max(alpha, best_score);
-            if (beta <= alpha) break; // Odcięcie Beta
+            if (beta <= alpha) break; 
         }
     } else {
         best_score = 3000000;
@@ -244,17 +249,103 @@ int alphabeta(int depth, int alpha, int beta) {
             int score = alphabeta(depth - 1, alpha, beta);
             board.unmakeMove(m);
             
-            if (score < best_score) {
-                best_score = score;
-            }
+            if (score < best_score) best_score = score;
             beta = std::min(beta, best_score);
-            if (beta <= alpha) break; // Odcięcie Alpha
+            if (beta <= alpha) break;
         }
     }
 
-    // 2. Zapisanie wyniku do TT przed wyjściem
-    transposition_table[pos_hash] = {depth, best_score};
+    // 2. Zapisywanie do TT z odpowiednią flagą
+    TTEntry entry;
+    entry.depth = depth;
+    entry.score = best_score;
+
+    if (board.sideToMove() == Color::WHITE) {
+        if (best_score <= original_alpha) entry.flag = UPPERBOUND;
+        else if (best_score >= beta) entry.flag = LOWERBOUND;
+        else entry.flag = EXACT;
+    } else {
+        if (best_score >= original_beta) entry.flag = LOWERBOUND;
+        else if (best_score <= alpha) entry.flag = UPPERBOUND;
+        else entry.flag = EXACT;
+    }
+
+    transposition_table[pos_hash] = entry;
     return best_score;
+}
+
+// --- POPRAWIONA PĘTLA W MAIN (sekcja "go") ---
+// Wklej to wewnątrz else if (line.find("go") == 0)
+{
+    // Nie czyść TT całkowicie przy każdym ruchu (opcjonalnie, ale lepiej zostawić dla szybkości)
+    // transposition_table.clear(); 
+
+    std::string current_fen = board.getFen();
+    if (opening_book.count(current_fen)) {
+        std::vector<std::string>& book_moves = opening_book[current_fen];
+        static std::mt19937 gen(std::chrono::system_clock::now().time_since_epoch().count());
+        std::uniform_int_distribution<> dis(0, book_moves.size() - 1);
+        std::cout << "bestmove " << book_moves[dis(gen)] << std::endl;
+        continue; 
+    }
+
+    nodes_visited = 0;
+    auto start = std::chrono::high_resolution_clock::now();
+    
+    int depth = 6;
+    size_t d_pos = line.find("depth");
+    if (d_pos != std::string::npos) depth = std::stoi(line.substr(d_pos + 6));
+
+    Movelist moves;
+    movegen::legalmoves(moves, board);
+    if (moves.empty()) { std::cout << "bestmove 0000" << std::endl; continue; }
+
+    std::sort(moves.begin(), moves.end(), [](const Move& a, const Move& b) {
+        return get_move_score(a) > get_move_score(b);
+    });
+
+    Color mover = board.sideToMove();
+    Move best_m = moves[0];
+    
+    // Ustawiamy wartości startowe poza zakresem alphabeta
+    int best_v = (mover == Color::WHITE) ? -5000000 : 5000000;
+
+    for (auto m : moves) {
+        board.makeMove(m);
+        uint64_t next_h = board.hash();
+        
+        bool repeat = false;
+        for (auto h : position_history) {
+            if (h == next_h) { repeat = true; break; }
+        }
+
+        int score;
+        if (repeat) {
+            score = 0; // Remis przez powtórzenie
+        } else {
+            // Wywołujemy z pełnym oknem, aby otrzymać dokładny wynik dla pierwszego poziomu
+            score = alphabeta(depth - 1, -4000000, 4000000);
+        }
+
+        board.unmakeMove(m);
+
+        if (mover == Color::WHITE) {
+            if (score > best_v) { 
+                best_v = score; 
+                best_m = m; 
+            }
+        } else {
+            if (score < best_v) { 
+                best_v = score; 
+                best_m = m; 
+            }
+        }
+    }
+
+    auto end = std::chrono::high_resolution_clock::now();
+    auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
+    std::cerr << "info depth " << depth << " nodes " << nodes_visited << " time " << duration << " score cp " << best_v << std::endl;
+    std::cout << "bestmove " << uci::moveToUci(best_m) << std::endl;
 }
 
 // --- MAIN ---
