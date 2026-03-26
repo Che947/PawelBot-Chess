@@ -157,7 +157,12 @@ int evaluate() {
         auto pt = piece.type();
         Color c = piece.color();
 
-        if (pt == PieceType::PAWN) { val = 100; pst = pawn_pst; }
+        if (pt == PieceType::PAWN) { 
+            val = 100; pst = pawn_pst; 
+            int r = (int)sq.rank();
+            int rank_bonus = (c == Color::WHITE) ? (r * r) : ((7 - r) * (7 - r));
+            val += (int)(rank_bonus * (0.2f + (0.8f * phase)));
+        }
         else if (pt == PieceType::KNIGHT) { val = 320; pst = knight_pst; }
         else if (pt == PieceType::BISHOP) { val = 330; }
         else if (pt == PieceType::ROOK)   { val = 500; }
@@ -202,6 +207,8 @@ int alphabeta(int depth, int alpha, int beta) {
 
     int best_score;
     int old_alpha = alpha;
+    int old_beta = beta;
+
     if (board.sideToMove() == Color::WHITE) {
         best_score = -3000000;
         for (auto m : moves) {
@@ -227,7 +234,7 @@ int alphabeta(int depth, int alpha, int beta) {
     TTEntry entry;
     entry.depth = depth; entry.score = best_score;
     if (best_score <= old_alpha) entry.flag = UPPERBOUND;
-    else if (best_score >= beta) entry.flag = LOWERBOUND;
+    else if (best_score >= old_beta) entry.flag = LOWERBOUND;
     else entry.flag = EXACT;
     transposition_table[pos_hash] = entry;
     return best_score;
@@ -239,7 +246,7 @@ int main() {
     std::string line;
     while (std::getline(std::cin, line)) {
         if (line == "uci") {
-            std::cout << "id name PawelBot_V14\nid author Pawel\nuciok" << std::endl;
+            std::cout << "id name PawelBot_V14_MAX\nid author Pawel\nuciok" << std::endl;
         } else if (line == "isready") {
             std::cout << "readyok" << std::endl;
         } else if (line.find("position fen") == 0) {
@@ -248,6 +255,13 @@ int main() {
             std::string fen; for(int i=0; i<6; i++) { ss >> t; fen += t + " "; }
             board.setFen(fen);
             position_history.clear();
+            while (ss >> t) if (t == "moves") {
+                while (ss >> t) {
+                    Move m = uci::uciToMove(board, t);
+                    board.makeMove(m);
+                    position_history.push_back(board.hash());
+                }
+            }
         } else if (line.find("go") == 0) {
             transposition_table.clear();
             std::string current_fen = board.getFen();
@@ -274,15 +288,18 @@ int main() {
 
             for (auto m : moves) {
                 board.makeMove(m);
-                int score = alphabeta(depth - 1, -4000000, 4000000);
+                uint64_t next_h = board.hash();
+                bool repeat = false;
+                for (auto h : position_history) if (h == next_h) repeat = true;
+
+                int score = repeat ? 0 : alphabeta(depth - 1, -4000000, 4000000);
                 board.unmakeMove(m);
+
                 if (mover == Color::WHITE) { if (score > best_v) { best_v = score; best_m = m; } }
                 else { if (score < best_v) { best_v = score; best_m = m; } }
             }
             std::cout << "bestmove " << uci::moveToUci(best_m) << std::endl;
         } else if (line == "quit") break;
     }
-    return 0;
-}
     return 0;
 }
