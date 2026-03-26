@@ -34,8 +34,6 @@ def find_mate_in_one(board):
             return move
         board.pop()
     return None
-
-# POPRAWKA: Dodajemy parametr my_time, żeby nie pytać o niego API Lichessa
 def get_engine_move(board, game_id, my_time):
     # 1. Natychmiastowy mat w 1 ruchu
     mate_move = find_mate_in_one(board)
@@ -53,17 +51,14 @@ def get_engine_move(board, game_id, my_time):
             depth = 6
             print(f"DEBUG: Szybki start (półruch {moves_played}) -> Depth: 6")
         else:
-            # Sprawdzamy, czy time_left w ogóle istnieje
-            if time_left is not None:
-                # Zamieniamy obiekt timedelta na sekundy (liczbę)
-                current_seconds = time_left.total_seconds()
-                
-                # Teraz używamy current_seconds we wszystkich porównaniach
-                if current_seconds > 300:
+            # Używamy my_time (to już są sekundy jako float/int)
+            if my_time is not None:
+                # Progi czasowe
+                if my_time > 300:
                     depth = 8
-                elif current_seconds > 120:
+                elif my_time > 120:
                     depth = 7
-                elif current_seconds > 15:
+                elif my_time > 15:
                     depth = 6
                 else:
                     depth = 4
@@ -72,15 +67,15 @@ def get_engine_move(board, game_id, my_time):
                 occupied_mask = int(board.occupied)
                 piece_count = bin(occupied_mask).count('1') 
                 
-                if current_seconds > 15:  
+                if my_time > 15:  
                     if piece_count <= 5:
                         depth += 3
                         print(f"DEBUG: Głęboka końcówka ({piece_count} bierek) -> Super Bonus +3")
                     elif piece_count <= 12:
-                        depth = depth + 1 # Bezpieczniejszy zapis
+                        depth += 1
                         print(f"DEBUG: Końcówka ({piece_count} bierek) -> Bonus +1")
 
-                print(f"DEBUG: Czas: {current_seconds}s -> Ustawiam Depth: {depth}")
+                print(f"DEBUG: Czas: {my_time:.1f}s -> Ustawiam Depth: {depth}")
             else:
                 depth = 7
     except Exception as e:
