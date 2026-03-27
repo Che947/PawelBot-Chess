@@ -169,16 +169,15 @@ int evaluate() {
         else if (pt == PieceType::KNIGHT) { val = 320; pst = knight_pst; }
         else if (pt == PieceType::BISHOP) { val = 330; }
         else if (pt == PieceType::ROOK)   { val = 500; }
-        else if (pt == PieceType::QUEEN)  { 
+        else if (pt == PieceType::QUEEN) { 
             val = 900; 
             
             // --- POPRAWKA: KARA ZA WCZESNE WYJŚCIE HETMANEM ---
-            // Jeśli faza gry jest niska (dużo figur = debiut)
             if (phase < 0.2f) { 
-                if (c == Color::WHITE && i != 3) { // 3 to indeks pola D1
-                    val -= 50; 
-                } else if (c == Color::BLACK && i != 59) { // 59 to indeks pola D8
-                    val -= 50;
+                if (c == Color::WHITE && i != 3) {
+                    val -= 20; // Zmniejszono z 50 na 20
+                } else if (c == Color::BLACK && i != 59) {
+                    val -= 20; // Zmniejszono z 50 na 20
                 }
             }
         }
@@ -200,6 +199,8 @@ int evaluate() {
 int alphabeta(int depth, int alpha, int beta) {
     nodes_visited++;
     uint64_t pos_hash = board.hash();
+    
+    // Sprawdzenie w tablicy transpozycji
     if (transposition_table.count(pos_hash)) {
         auto& entry = transposition_table[pos_hash];
         if (entry.depth >= depth) {
@@ -211,48 +212,59 @@ int alphabeta(int depth, int alpha, int beta) {
 
     Movelist moves;
     movegen::legalmoves(moves, board);
+    
+    // Obsługa końca gry (mat/pat)
     if (moves.empty()) {
-        if (board.inCheck()) return (board.sideToMove() == Color::WHITE) ? (-1000000 - depth) : (1000000 + depth);
-        return 0;
+        if (board.inCheck()) {
+            // Wartość mata zależna od głębokości (szukamy najszybszego)
+            return (board.sideToMove() == Color::WHITE) ? (-1000000 - depth) : (1000000 + depth);
+        }
+        return 0; // Pat
     }
+
     if (depth <= 0) return evaluate();
 
+    // Sortowanie ruchów (MVV-LVA)
     std::sort(moves.begin(), moves.end(), [](const Move& a, const Move& b) {
         return get_move_score(a) > get_move_score(b);
     });
 
     int best_score;
     int old_alpha = alpha;
-    int old_beta = beta;
 
     if (board.sideToMove() == Color::WHITE) {
-        best_score = -3000000;
+        best_score = -2000000; // Startujemy poniżej możliwych wyników
         for (auto m : moves) {
             board.makeMove(m);
             int score = alphabeta(depth - 1, alpha, beta);
             board.unmakeMove(m);
+            
             if (score > best_score) best_score = score;
             alpha = std::max(alpha, best_score);
-            if (beta <= alpha) break;
+            if (beta <= alpha) break; // Odcięcie Beta
         }
     } else {
-        best_score = 3000000;
+        best_score = 2000000; // Startujemy powyżej możliwych wyników
         for (auto m : moves) {
             board.makeMove(m);
             int score = alphabeta(depth - 1, alpha, beta);
             board.unmakeMove(m);
+            
             if (score < best_score) best_score = score;
             beta = std::min(beta, best_score);
-            if (beta <= alpha) break;
+            if (beta <= alpha) break; // Odcięcie Alpha
         }
     }
 
+    // Zapis do tablicy transpozycji
     TTEntry entry;
-    entry.depth = depth; entry.score = best_score;
+    entry.depth = depth; 
+    entry.score = best_score;
     if (best_score <= old_alpha) entry.flag = UPPERBOUND;
-    else if (best_score >= old_beta) entry.flag = LOWERBOUND;
+    else if (best_score >= beta) entry.flag = LOWERBOUND;
     else entry.flag = EXACT;
     transposition_table[pos_hash] = entry;
+
     return best_score;
 }
 
@@ -279,16 +291,18 @@ int main() {
                 }
             }
         } else if (line.find("go") == 0) {
-            transposition_table.clear();
+            transposition_table.clear(); // Skoro tak było wcześniej, zostawiamy
             std::string current_fen = board.getFen();
+            
+            // Opening book
             if (opening_book.count(current_fen)) {
                 std::vector<std::string>& bmoves = opening_book[current_fen];
                 static std::mt19937 gen(std::chrono::system_clock::now().time_since_epoch().count());
                 std::cout << "bestmove " << bmoves[std::uniform_int_distribution<>(0, bmoves.size()-1)(gen)] << std::endl;
                 continue;
             }
+
             nodes_visited = 0;
-            auto start = std::chrono::high_resolution_clock::now();
             int depth = 6;
             size_t d_pos = line.find("depth");
             if (d_pos != std::string::npos) depth = std::stoi(line.substr(d_pos + 6));
@@ -296,23 +310,33 @@ int main() {
             Movelist moves;
             movegen::legalmoves(moves, board);
             if (moves.empty()) { std::cout << "bestmove 0000" << std::endl; continue; }
-            std::sort(moves.begin(), moves.end(), [](const Move& a, const Move& b) { return get_move_score(a) > get_move_score(b); });
+            
+            std::sort(moves.begin(), moves.end(), [](const Move& a, const Move& b) { 
+                return get_move_score(a) > get_move_score(b); 
+            });
 
             Color mover = board.sideToMove();
             Move best_m = moves[0];
-            int best_v = (mover == Color::WHITE) ? -5000000 : 5000000;
+            // Ustawiamy wartości startowe POZA zakresem Alpha-Beta (-1.5mln do 1.5mln)
+            int best_v = (mover == Color::WHITE) ? -2000000 : 2000000;
 
             for (auto m : moves) {
                 board.makeMove(m);
                 uint64_t next_h = board.hash();
+                
+                // Sprawdzenie powtórzeń pozycji (remis)
                 bool repeat = false;
                 for (auto h : position_history) if (h == next_h) repeat = true;
 
-                int score = repeat ? 0 : alphabeta(depth - 1, -4000000, 4000000);
+                // WYWOŁANIE Z POPRAWNYM OKNEM ALPHA-BETA (-1.5 mln do 1.5 mln)
+                int score = repeat ? 0 : alphabeta(depth - 1, -1500000, 1500000);
                 board.unmakeMove(m);
 
-                if (mover == Color::WHITE) { if (score > best_v) { best_v = score; best_m = m; } }
-                else { if (score < best_v) { best_v = score; best_m = m; } }
+                if (mover == Color::WHITE) { 
+                    if (score > best_v) { best_v = score; best_m = m; } 
+                } else { 
+                    if (score < best_v) { best_v = score; best_m = m; } 
+                }
             }
             std::cout << "bestmove " << uci::moveToUci(best_m) << std::endl;
         } else if (line == "quit") break;
